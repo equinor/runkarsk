@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 // Parsing of Args to get the queue system has become a bit too complicated.
 /// Over time it has become a kind of a linear state machine. This file
 /// hopefully makes it make a bit more sense and a bit less buggy.
@@ -97,6 +99,7 @@ struct Step2 {
     num_machines: usize,
 }
 
+#[derive(Debug)]
 pub enum QueueSystem {
     Local {
         num_tasks_per_machine: usize,
@@ -153,6 +156,7 @@ impl QueueSystem {
         }
     }
 
+    #[instrument(fields(otel.kind = "client"))]
     pub async fn exec(&self, command: Command) {
         match self {
             QueueSystem::Local { .. } => {

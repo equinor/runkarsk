@@ -1,6 +1,12 @@
+use opentelemetry::propagation::TextMapPropagator;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use runkarsk::config;
+use runkarsk::telemetry::Telemetry;
 use runkarsk::util::have_linux_module;
+use tracing::instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -73,8 +79,8 @@ where
     let _ = w2.flush().await;
 }
 
-#[tokio::main]
-pub async fn main() {
+#[instrument(fields(otel.kind = "server"))]
+async fn start(args: Args) -> i32 {
     let args = Args::parse();
     let mut command = build_command(&args);
 
@@ -99,5 +105,26 @@ pub async fn main() {
     stdout_task.await.unwrap();
     stderr_task.await.unwrap();
 
-    std::process::exit(status.code().unwrap_or_default());
+    status.code().unwrap_or_default()
+}
+
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+
+    let telemetry = Telemetry::init(env!("CARGO_BIN_NAME"));
+    let carrier: HashMap<_, _> = ["traceparent", "tracestate"]
+        .into_iter()
+        .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
+        .collect();
+
+    let parent = TraceContextPropagator::new().extract(&carrier);
+    let code = {
+        let span = tracing::info_span!("runner");
+        span.set_parent(parent).unwrap();
+        let _entered = span.enter();
+        start(args).await
+    };
+    telemetry.shutdown();
+    std::process::exit(code);
 }

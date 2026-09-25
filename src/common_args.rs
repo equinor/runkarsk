@@ -1,9 +1,10 @@
 use clap::{CommandFactory, FromArgMatches, Parser};
+use serde::Serialize;
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-#[derive(Parser)]
+#[derive(Debug, Parser, Serialize)]
 pub struct CommonArgs {
     /// Cirrus .in input file
     #[arg(required_unless_present = "print_versions")]
@@ -44,6 +45,14 @@ pub struct CommonArgs {
     /// Print the command that would be executed
     #[arg(long)]
     pub dry_run: bool,
+
+    /// OpenTelemetry Trace ID
+    #[arg(long, hide = true)]
+    pub otel_trace_id: Option<String>,
+
+    /// OpenTelemetry parent span ID
+    #[arg(long, hide = true)]
+    pub otel_parent_span_id: Option<String>,
 }
 
 fn converted_deprecated_args() -> Vec<OsString> {

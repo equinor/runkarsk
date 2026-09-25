@@ -10,8 +10,7 @@ thread_local! {
 #[macro_export]
 macro_rules! exit {
     (code=$code:expr, $($arg:tt)*) => {{
-        std::eprint!("{}: ", $crate::util::BIN_NAME.get());
-        std::eprintln!($($arg)*);
+        tracing::error!($($arg)*);
         std::process::exit($code);
     }};
 
