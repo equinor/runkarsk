@@ -3,12 +3,14 @@
 let
 
   clickhousePort = toString config.processes.clickhouse-server.ports.main.value;
+  grpcEndpoint = config.services.opentelemetry-collector.settings.receivers.otlp.protocols.grpc.endpoint;
 
 in {
   languages.rust.enable = true;
 
   env = {
-    KARSKSAL_ROOT = "/opt/karsk/project";
+    KARSKSAL_ROOT = "/prog/ccs/cirrus";
+    RUNKARSK_OTEL_EXPORTER_OTLP_ENDPOINT = "http://${grpcEndpoint}";
   };
 
   services = {

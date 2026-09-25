@@ -121,7 +121,9 @@ async fn main() {
     let parent = TraceContextPropagator::new().extract(&carrier);
     let code = {
         let span = tracing::info_span!("runner");
-        span.set_parent(parent).unwrap();
+        if !carrier.is_empty() {
+            span.set_parent(parent).unwrap();
+        }
         let _entered = span.enter();
         start(args).await
     };
