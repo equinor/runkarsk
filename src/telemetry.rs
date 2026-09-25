@@ -58,48 +58,60 @@ where
 }
 
 pub struct Telemetry {
-    provider: SdkTracerProvider,
+    provider: Option<SdkTracerProvider>,
 }
 
 impl Telemetry {
     pub fn init(service_name: &str) -> Self {
-        let resource = Resource::builder_empty()
-            .with_service_name(service_name.to_string())
-            .build();
-
-        let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-            .unwrap_or_else(|_| "http://localhost:4317".to_string());
-
-        let exporter = opentelemetry_otlp::SpanExporter::builder()
-            .with_tonic() // OTLP over gRPC
-            .with_endpoint(&otlp_endpoint)
-            .with_protocol(opentelemetry_otlp::Protocol::Grpc)
-            .build()
-            .expect("Failed to create OTLP exporter");
-
-        let provider = SdkTracerProvider::builder()
-            .with_batch_exporter(exporter)
-            .with_resource(resource)
-            .build();
-
-        let tracer = provider.tracer(service_name.to_string());
-
-        let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-
-        let env_filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info,otel::tracing=trace"));
-
         let fmt_layer = tracing_subscriber::fmt::layer().event_format(SimpleConsoleFormat {
             name: service_name.to_string(),
         });
 
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt_layer)
-            .with(otel_layer)
-            .init();
+        let otlp_endpoint_var = std::env::var("RUNKARSK_OTEL_EXPORTER_OTLP_ENDPOINT")
+            .ok()
+            .or(option_env!("OTEL_EXPORTER_OTLP_ENDPOINT").map(|s| s.to_owned()));
 
-        Self { provider }
+        if let Some(otlp_endpoint) = otlp_endpoint_var {
+            let env_filter = EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info,otel::tracing=trace"));
+            let resource = Resource::builder_empty()
+                .with_service_name(service_name.to_string())
+                .build();
+
+            let exporter = opentelemetry_otlp::SpanExporter::builder()
+                .with_tonic() // OTLP over gRPC
+                .with_endpoint(otlp_endpoint)
+                .with_protocol(opentelemetry_otlp::Protocol::Grpc)
+                .build()
+                .expect("Failed to create OTLP exporter");
+
+            let provider = SdkTracerProvider::builder()
+                .with_batch_exporter(exporter)
+                .with_resource(resource)
+                .build();
+
+            let tracer = provider.tracer(service_name.to_string());
+
+            let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .with(otel_layer)
+                .init();
+            return Self {
+                provider: Some(provider),
+            };
+        } else {
+            let env_filter = EnvFilter::from_default_env();
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(fmt_layer)
+                .init();
+        };
+
+        Self { provider: None }
     }
 
     pub fn with(service_name: &str, f: impl FnOnce()) {
@@ -110,7 +122,9 @@ impl Telemetry {
     }
 
     pub fn shutdown(&self) {
-        if let Err(e) = self.provider.shutdown() {
+        if let Some(ref provider) = self.provider
+            && let Err(e) = provider.shutdown()
+        {
             eprintln!("Failed to finalise telemetry: {e}");
         }
     }
