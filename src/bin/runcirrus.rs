@@ -1,15 +1,26 @@
+use opentelemetry::propagation::TextMapPropagator;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use runkarsk::common_args::CommonArgs;
 use runkarsk::config;
 
 use runkarsk::common_args;
 use runkarsk::queue_system::QueueSystem;
 use runkarsk::spec::Spec;
+use runkarsk::telemetry::Telemetry;
+use std::collections::HashMap;
 use std::env;
 use std::process::Command;
+use tracing::instrument;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = common_args::parse(env!("CARGO_BIN_NAME"));
-    let spec = Spec::new(args.input.unwrap(), args.version)?;
+#[instrument(skip(args), fields(request = %serde_json::to_string(&args).unwrap_or_else(|_| "<failed to serialize>".to_string())))]
+async fn start(args: CommonArgs) {
+    let spec = match Spec::new(args.input.unwrap(), args.version) {
+        Ok(spec) => spec,
+        Err(err) => {
+            tracing::error!("{}", err);
+            return;
+        }
+    };
 
     let qs = QueueSystem::from_args(args.queue, args.num_tasks_per_machine, args.num_machines);
 
@@ -30,11 +41,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .arg("-M")
         .arg(mpirun_path);
 
+    let mut fields = HashMap::new();
+    TraceContextPropagator::new().inject(&mut fields);
+    command.envs(fields);
+
     command
         .arg(spec.get_bin("cirrus"))
         .arg("-cirrusin")
         .arg(spec.get_input());
 
     qs.exec(command).await;
-    Ok(())
+}
+
+#[tokio::main]
+async fn main() {
+    let args = common_args::parse(env!("CARGO_BIN_NAME"));
+
+    let _telemetry = Telemetry::init(env!("CARGO_BIN_NAME"));
+
+    start(args).await;
 }

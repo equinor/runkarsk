@@ -1,6 +1,5 @@
 use std::env;
 use std::path::PathBuf;
-pub const SETUP_COMMAND: Option<&str> = option_env!("RUNKARSK_SETUP_COMMAND");
 
 pub fn karsksal_root() -> PathBuf {
     env::var_os("KARSKSAL_ROOT")
