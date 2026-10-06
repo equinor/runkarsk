@@ -1,13 +1,13 @@
 use opentelemetry::propagation::TextMapPropagator;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use runkarsk::config;
-use runkarsk::telemetry::Telemetry;
+use runkarsk::telemetry::{Telemetry, log_tokio_command};
 use runkarsk::util::have_linux_module;
+use serde::Serialize;
 use tracing::instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::Stdio;
 
@@ -16,7 +16,7 @@ use tokio::fs::File;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::process::Command;
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Serialize)]
 struct Args {
     #[arg(short = 'C')]
     output_directory: PathBuf,
@@ -31,10 +31,12 @@ struct Args {
     mpirun_path: PathBuf,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 1..)]
-    program_args: Vec<OsString>,
+    program_args: Vec<String>,
 }
 
 fn build_command(args: &Args) -> Command {
+    let monitor_path = std::env::current_exe().unwrap().with_file_name("monitor");
+
     let mut command = Command::new(args.mpirun_path.clone());
     command
         .current_dir(&args.output_directory)
@@ -52,6 +54,7 @@ fn build_command(args: &Args) -> Command {
         command.arg("-np").arg(args.num_tasks.to_string());
     }
 
+    command.arg(monitor_path);
     command.args(&args.program_args);
     command
 }
@@ -79,10 +82,11 @@ where
     let _ = w2.flush().await;
 }
 
-#[instrument(fields(otel.kind = "server"))]
+#[instrument(skip(args), fields(args = %serde_json::to_string(&args).unwrap_or_else(|_| "<failed to serialize>".to_string()), otel.kind = "server"))]
 async fn start(args: Args) -> i32 {
     let args = Args::parse();
     let mut command = build_command(&args);
+    log_tokio_command(&command);
 
     let _ = std::fs::create_dir_all(&args.output_directory);
 

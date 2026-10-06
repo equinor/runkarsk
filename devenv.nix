@@ -3,7 +3,7 @@
 let
 
   clickhousePort = toString config.processes.clickhouse-server.ports.main.value;
-  grpcEndpoint = config.services.opentelemetry-collector.settings.receivers.otlp.protocols.grpc.endpoint;
+  grpcEndpoint = "localhost:4317";
 
 in {
   languages.rust.enable = true;
@@ -23,7 +23,7 @@ in {
         receivers = {
           otlp = {
             protocols = {
-              grpc.endpoint = "localhost:4317";
+              grpc.endpoint = grpcEndpoint;
               http.endpoint = "localhost:4318";
             };
           };
