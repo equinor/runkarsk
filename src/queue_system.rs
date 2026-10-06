@@ -235,10 +235,6 @@ mod tests {
         }
     }
 
-    fn set_machinefile(path: impl AsRef<Path>, num_hosts: usize) {
-        set_machinefile_for_var(path, num_hosts, config::MACHINEFILES[0]);
-    }
-
     #[test]
     fn test_get_max_allowed_cpu() {
         let params = [
