@@ -26,12 +26,12 @@ fn setup_command_in(tmp: &PathBuf) -> Command {
     command.arg("-C").arg(outdir.clone().into_os_string());
 
     let mpirun = tmp
-        .join("karsksal/versions/1.2.3/bin/mpirun")
+        .join("cirrus/versions/1.2.3/bin/mpirun")
         .into_os_string();
     command.arg("-M").arg(mpirun);
 
     let cirrus = tmp
-        .join("karsksal/versions/1.2.3/bin/cirrus")
+        .join("cirrus/versions/1.2.3/bin/cirrus")
         .into_os_string();
     command.arg(cirrus).args(["-cirrusin", "somefile.in"]);
 

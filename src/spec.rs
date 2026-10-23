@@ -16,17 +16,26 @@ pub struct Spec {
 }
 
 impl Spec {
-    pub fn new(input: PathBuf, version: Option<String>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(
+        product: &'static str,
+        input: PathBuf,
+        version: Option<String>,
+    ) -> Result<Self, Box<dyn Error>> {
         let version = version.unwrap_or(DEFAULT_VERSION.to_string());
         let (case_dir, case_name) = split_input_into_dir_and_case(&input);
-        let prefix = fs::canonicalize(config::karsksal_root().join("versions").join(&version))
-            .map_err(|e| {
-                format!(
-                    "Couldn't find version {:?} in {:?}: {e}",
-                    version,
-                    config::karsksal_root()
-                )
-            })?;
+        let prefix = fs::canonicalize(
+            config::karsksal_root()
+                .join(product)
+                .join("versions")
+                .join(&version),
+        )
+        .map_err(|e| {
+            format!(
+                "Couldn't find version {:?} in {:?}: {e}",
+                version,
+                config::karsksal_root().join(product)
+            )
+        })?;
 
         Ok(Self {
             prefix,

@@ -8,6 +8,7 @@ use tracing::instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
 use std::collections::HashMap;
+use std::num::NonZero;
 use std::path::PathBuf;
 use std::process::Stdio;
 
@@ -25,7 +26,7 @@ struct Args {
     case: String,
 
     #[arg(short = 'n')]
-    num_tasks: usize,
+    num_tasks: NonZero<usize>,
 
     #[arg(short = 'M')]
     mpirun_path: PathBuf,

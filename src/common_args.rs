@@ -1,3 +1,4 @@
+use crate::queue_args::QueueArgs;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use serde::Serialize;
 use std::env;
@@ -10,21 +11,8 @@ pub struct CommonArgs {
     #[arg(required_unless_present = "print_versions")]
     pub input: Option<PathBuf>,
 
-    /// Job queue, or 'local' to run on this machine
-    #[arg(short, long, default_value = "local")]
-    pub queue: String,
-
-    /// Number of tasks/processes per machine
-    #[arg(short = 'n', long)]
-    pub num_tasks_per_machine: Option<usize>,
-
-    /// Number of machines (nodes)
-    #[arg(short = 'm', long, default_value_t = 1)]
-    pub num_machines: usize,
-
-    /// Use 'local' job queue
-    #[arg(short, long)]
-    pub interactive: bool,
+    #[command(flatten)]
+    pub queue_args: QueueArgs,
 
     /// Version of Cirrus to use
     #[arg(short = 'v', long)]
