@@ -23,19 +23,18 @@ fn run_local_with_just_input_file() {
     std::fs::write(tmp.join("project/case.in"), "foobar").unwrap();
 
     let mut command = bin_runcirrus();
-    command.env("KARSKSAL_ROOT", tmp.join("karsksal"));
+    command.env("KARSKSAL_ROOT", &tmp);
     command.arg(tmp.join("project/case.in"));
 
     let output = command.output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
 
-    let np = std::thread::available_parallelism().unwrap().get();
+    let np = std::thread::available_parallelism().unwrap();
     assert_eq!(
         stdout,
         format!(
-            "Fake MPIRun with np={}, machinefile=unset\nFake Cirrus 1.2.3 with args: -cirrusin {}\n",
-            np,
+            "Fake MPIRun with np={np}, machinefile=unset\nFake Cirrus 1.2.3 with args: -cirrusin {}\n",
             tmp.join("project/case.in").display()
         )
     );
@@ -51,7 +50,7 @@ fn run_local_with_specified_version() {
     std::fs::write(tmp.join("project/case.in"), "foobar").unwrap();
 
     let mut command = bin_runcirrus();
-    command.env("KARSKSAL_ROOT", tmp.join("karsksal"));
+    command.env("KARSKSAL_ROOT", &tmp);
     command.args(["-v", "2.0.0"]);
     command.arg(tmp.join("project/case.in"));
 
@@ -80,7 +79,7 @@ fn run_local_with_specified_version_using_symlink() {
     std::fs::write(tmp.join("project/case.in"), "foobar").unwrap();
 
     let mut command = bin_runcirrus();
-    command.env("KARSKSAL_ROOT", tmp.join("karsksal"));
+    command.env("KARSKSAL_ROOT", &tmp);
     command.args(["-v", "other-version"]);
     command.arg(tmp.join("project/case.in"));
 

@@ -6,12 +6,21 @@ use tracing::instrument;
 use crate::config;
 use crate::exit;
 
-use crate::queues::{LocalScheduler, Scheduler};
+use crate::config::MACHINEFILES;
+use crate::queue_args::QueueArgs;
+use clap::ValueEnum;
+use serde::Serialize;
 use std::env::var_os;
+use std::error::Error;
+use std::fmt;
 use std::fs::read_to_string;
+use std::num::NonZero;
+use std::num::NonZeroUsize;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::thread::available_parallelism;
+use tokio::process::Command as AsyncCommand;
 
 fn count_lines(path: impl AsRef<Path>) -> usize {
     let path = path.as_ref();
@@ -22,151 +31,209 @@ fn count_lines(path: impl AsRef<Path>) -> usize {
 
 /// Get maximum allowed CPU on this current system. Doesn't apply to cluster
 /// workloads as we don't know how many CPU cores they have
-fn get_max_allowed_cpu(requested: Option<usize>) -> usize {
-    let clamp = |available: usize| available.min(requested.unwrap_or(available));
+fn get_max_allowed_cpu(requested: Option<NonZero<usize>>) -> NonZero<usize> {
+    let clamp = |available: NonZero<usize>| available.min(requested.unwrap_or(available));
 
     for key in config::MACHINEFILES {
-        let Some(file) = var_os(key) else {
+        let Some(hostfile_max) = var_os(key).map(count_lines).and_then(NonZero::new) else {
             continue;
         };
-
-        let hostfile_max = count_lines(file);
         return clamp(hostfile_max);
     }
 
-    let machine_max = available_parallelism().map_or(1, |x| x.get());
+    let machine_max = available_parallelism().unwrap_or(NonZeroUsize::MIN);
     clamp(machine_max)
 }
 
-/// First step with data exactly as it comes from argument parsing
-struct Step1 {
-    queue: String,
-    num_tasks_per_machine: Option<usize>,
-    num_machines: usize,
+#[derive(Debug, Copy, Clone, ValueEnum, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum QueueSystemKind {
+    Lsf,
+    Pbs,
 }
 
-impl Step1 {
-    /// When running on HPC directly, we must ensure that we don't submit
-    /// another job to the cluster. Our users may be using Ert to run this
-    /// program, which is responsible for managing the jobs.
-    fn enforce_local_on_hpc(self) -> Self {
-        let are_we_on_hpc = config::MACHINEFILES.iter().all(|key| var_os(key).is_some());
+impl QueueSystemKind {
+    pub const ALL: [Self; 2] = [Self::Lsf, Self::Pbs];
 
-        if self.queue != "local" && are_we_on_hpc {
-            Self {
-                queue: String::from("local"),
-                num_tasks_per_machine: self.num_tasks_per_machine,
-                num_machines: 1,
-            }
-        } else {
-            self
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Lsf => "lsf",
+            Self::Pbs => "pbs",
         }
     }
 
-    fn clamp_to_available_cores(self) -> Self {
-        if self.queue == "local" {
-            Self {
-                queue: self.queue,
-                num_tasks_per_machine: Some(get_max_allowed_cpu(self.num_tasks_per_machine)),
-                num_machines: self.num_machines,
-            }
-        } else {
-            self
+    pub fn program_name(self) -> &'static str {
+        match self {
+            Self::Lsf => "bsub",
+            Self::Pbs => "qsub",
         }
     }
 
-    fn into_step2(self) -> Step2 {
-        let num_tasks_per_machine = self.num_tasks_per_machine.unwrap_or_else(|| {
-            exit!("Must specify -n/--num-tasks-per-machine when running on a non-local queue");
-        });
+    pub fn which(self) -> Option<PathBuf> {
+        which::which(self.program_name()).ok()
+    }
 
-        Step2 {
-            queue: if self.queue == "local" {
-                None
-            } else {
-                Some(self.queue)
-            },
-            num_tasks_per_machine,
-            num_machines: self.num_machines,
-        }
+    pub fn available() -> Vec<Self> {
+        Self::ALL
+            .into_iter()
+            .filter(|kind| kind.which().is_some())
+            .collect()
     }
 }
 
-struct Step2 {
-    /// Some(_) if we are to use the queue system and None if local
-    queue: Option<String>,
-    num_tasks_per_machine: usize,
-    num_machines: usize,
+impl fmt::Display for QueueSystemKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+fn in_cluster_job() -> bool {
+    MACHINEFILES.iter().any(|key| var_os(key).is_some())
 }
 
 #[derive(Debug)]
 pub enum QueueSystem {
-    Local {
-        num_tasks_per_machine: usize,
-    },
-
-    #[allow(unused)]
+    Local(NonZero<usize>),
     Cluster {
-        queue: String,
-        num_tasks_per_machine: usize,
-        num_machines: usize,
+        kind: QueueSystemKind,
+        queue: Option<String>,
+        num_tasks_per_machine: NonZero<usize>,
+        num_machines: NonZero<usize>,
     },
 }
 
 impl QueueSystem {
-    pub fn from_args(
-        queue: String,
-        num_tasks_per_machine: Option<usize>,
-        num_machines: usize,
-    ) -> Self {
-        let step1 = Step1 {
-            queue,
-            num_tasks_per_machine,
-            num_machines,
-        };
+    pub fn from_args(args: &QueueArgs) -> Result<Self, String> {
+        let max_n = available_parallelism().unwrap_or(NonZeroUsize::MIN);
+        let max_qs = QueueSystemKind::available();
 
-        let step2 = step1
-            .enforce_local_on_hpc()
-            .clamp_to_available_cores()
-            .into_step2();
+        if in_cluster_job() {
+            if args.queue.is_some() || args.queue_system.is_some() || args.num_machines.is_some() {
+                Err("Already running as a HPC job. It is invalid to specify -Q/--queue-system, -q/--queue or -m/--num-machines".to_string())
+            } else {
+                Ok(Self::Local(get_max_allowed_cpu(args.num_tasks_per_machine)))
+            }
+        } else if args.is_local() {
+            if let Some(m) = args.num_machines {
+                Err(format!(
+                    "Can't start job: Specify a queue system (-Q/--queue-system) to run on '{m}' machines"
+                ))
+            } else if let Some(req_n) = args.num_tasks_per_machine {
+                if req_n > max_n {
+                    Err(format!(
+                        "Can't start job: Requested {req_n} CPUs, but maximum is {max_n} on this machine"
+                    ))
+                } else {
+                    Ok(Self::Local(req_n))
+                }
+            } else {
+                Ok(Self::Local(max_n))
+            }
+        } else {
+            let queue = args.queue.clone();
+            let num_machines = args.num_machines.unwrap_or(NonZeroUsize::MIN);
+            let num_tasks_per_machine = args.num_tasks_per_machine.unwrap_or(NonZeroUsize::MIN);
 
-        match step2.queue {
-            Some(queue) => QueueSystem::Cluster {
-                queue,
-                num_tasks_per_machine: step2.num_tasks_per_machine,
-                num_machines: step2.num_machines,
-            },
-
-            None => QueueSystem::Local {
-                num_tasks_per_machine: step2.num_tasks_per_machine,
-            },
-        }
-    }
-
-    pub fn num_tasks(&self) -> usize {
-        match self {
-            QueueSystem::Local {
-                num_tasks_per_machine,
-            } => *num_tasks_per_machine,
-            QueueSystem::Cluster {
-                num_tasks_per_machine,
-                num_machines,
-                ..
-            } => *num_tasks_per_machine * *num_machines,
+            if let Some(kind) = args.queue_system {
+                if kind.which().is_none() {
+                    Err(format!(
+                        "Can't start job: Queue system '{kind}' requested, but isn't available"
+                    ))
+                } else {
+                    Ok(Self::Cluster {
+                        kind,
+                        queue,
+                        num_machines,
+                        num_tasks_per_machine,
+                    })
+                }
+            } else if max_qs.len() > 1 {
+                Err(format!(
+                    "Can't start job: Multiple queue systems detected. Select one of [{}] by using -Q/--queue-system",
+                    max_qs
+                        .into_iter()
+                        .map(|q| q.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            } else if let Some(kind) = max_qs.into_iter().next() {
+                Ok(Self::Cluster {
+                    kind,
+                    queue,
+                    num_machines,
+                    num_tasks_per_machine,
+                })
+            } else {
+                unreachable!()
+            }
         }
     }
 
     #[instrument(fields(otel.kind = "client"))]
-    pub async fn exec(&self, command: Command) {
+    pub async fn exec(&self, command: Command) -> Result<(), Box<dyn Error>> {
         match self {
             QueueSystem::Local { .. } => {
-                let s = LocalScheduler::new();
-                s.exec(command).await.unwrap();
+                let mut command = AsyncCommand::from(command);
+
+                let mut child = command.spawn()?;
+                child.wait().await?;
+                Ok(())
             }
 
-            QueueSystem::Cluster { .. } => {
-                unimplemented!();
+            QueueSystem::Cluster {
+                kind,
+                queue,
+                num_machines,
+                num_tasks_per_machine,
+            } => {
+                let mut c = AsyncCommand::new(kind.program_name());
+
+                match kind {
+                    QueueSystemKind::Lsf => {
+                        c.arg("-n")
+                            .arg(self.num_tasks().to_string())
+                            .arg("-R")
+                            .arg(format!("span[ptile={num_tasks_per_machine}]"));
+                    }
+                    QueueSystemKind::Pbs => {
+                        c.arg("-l")
+                               .arg(format!("select={num_machines}:ncpus={num_tasks_per_machine}:mpiproc={num_tasks_per_machine}"))
+                               .arg("-l").arg("place=scatter");
+                    }
+                }
+
+                // LSF and PBS use the same argument for queue
+                if let Some(queue) = queue {
+                    c.arg("-q").arg(queue);
+                };
+
+                c.arg("--")
+                    .arg(command.get_program())
+                    .args(command.get_args());
+
+                let mut child = c.spawn()?;
+                child.wait().await?;
+                Ok(())
             }
+        }
+    }
+
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(config::runner_path());
+
+        command.arg("-n").arg(self.num_tasks().to_string());
+
+        command
+    }
+
+    pub fn num_tasks(&self) -> NonZero<usize> {
+        match self {
+            Self::Local(n) => *n,
+            Self::Cluster {
+                num_tasks_per_machine,
+                num_machines,
+                ..
+            } => num_machines.saturating_mul(*num_tasks_per_machine),
         }
     }
 }
@@ -219,7 +286,7 @@ mod tests {
         let _hide_vars = HideVars::new();
 
         let actual = get_max_allowed_cpu(None);
-        let expect = available_parallelism().unwrap().get();
+        let expect = available_parallelism().unwrap();
 
         assert_eq!(actual, expect);
     }
@@ -251,7 +318,7 @@ mod tests {
             set_machinefile_for_var(tmp_path.join(format!("hostfile-{}", i)), num_hosts, key);
 
             let actual = get_max_allowed_cpu(None);
-            let expect = num_hosts;
+            let expect = NonZero::new(num_hosts).unwrap();
 
             assert_eq!(actual, expect);
         }

@@ -9,7 +9,7 @@ in {
   languages.rust.enable = true;
 
   env = {
-    KARSKSAL_ROOT = "/prog/ccs/cirrus";
+    KARSKSAL_ROOT = "/prog/ccs";
     RUNKARSK_OTEL_EXPORTER_OTLP_ENDPOINT = "http://${grpcEndpoint}";
   };
 
