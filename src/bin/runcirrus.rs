@@ -2,15 +2,14 @@ use clap::CommandFactory as _;
 use clap::error::ErrorKind;
 use runkarsk::common_args::CommonArgs;
 
-use runkarsk::common_args;
 use runkarsk::queue_system::QueueSystem;
 use runkarsk::spec::Spec;
-use runkarsk::telemetry::Telemetry;
 use runkarsk::util::CommandTracing;
+use runkarsk::{common_args, telemetry};
 use std::env;
 use tracing::instrument;
 
-#[instrument(skip(args), fields(request = %serde_json::to_string(&args).unwrap_or_else(|_| "<failed to serialize>".to_string())))]
+#[instrument(skip(args), fields(param.args = %serde_json::to_string(&args).unwrap_or_else(|_| "<failed to serialize>".to_string())))]
 async fn start(args: CommonArgs) {
     let spec = match Spec::new("cirrus", args.input.unwrap(), args.version) {
         Ok(spec) => spec,
@@ -48,11 +47,9 @@ async fn start(args: CommonArgs) {
     qs.exec(command).await.unwrap();
 }
 
-#[tokio::main]
-async fn main() {
-    let args = common_args::parse(env!("CARGO_BIN_NAME"));
-
-    let _telemetry = Telemetry::init(env!("CARGO_BIN_NAME"));
-
-    start(args).await;
+fn main() {
+    telemetry::run_main(env!("CARGO_BIN_NAME"), async || {
+        let args = common_args::parse(env!("CARGO_BIN_NAME"));
+        start(args).await;
+    });
 }

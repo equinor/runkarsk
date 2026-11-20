@@ -4,13 +4,17 @@ let
 
   clickhousePort = toString config.processes.clickhouse-server.ports.main.value;
   grpcEndpoint = "localhost:4317";
+  httpEndpoint = "localhost:4318";
 
 in {
   languages.rust.enable = true;
 
   env = {
     KARSKSAL_ROOT = "/prog/ccs";
-    RUNKARSK_OTEL_EXPORTER_OTLP_ENDPOINT = "http://${grpcEndpoint}";
+    # RUNKARSK_OTEL_EXPORTER_OTLP_ENDPOINT = "http://${grpcEndpoint}";
+    # RUNKARSK_OTEL_EXPORTER_OTLP_PROTOCOL = "grpc";
+    RUNKARSK_OTEL_EXPORTER_OTLP_ENDPOINT = "http://${httpEndpoint}";
+    RUNKARSK_OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf";
   };
 
   services = {
@@ -24,7 +28,7 @@ in {
           otlp = {
             protocols = {
               grpc.endpoint = grpcEndpoint;
-              http.endpoint = "localhost:4318";
+              http.endpoint = httpEndpoint;
             };
           };
         };

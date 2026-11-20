@@ -1,13 +1,9 @@
-use opentelemetry::propagation::TextMapPropagator;
-use opentelemetry_sdk::propagation::TraceContextPropagator;
-use runkarsk::config;
-use runkarsk::telemetry::{Telemetry, log_tokio_command};
+use runkarsk::telemetry::log_tokio_command;
 use runkarsk::util::have_linux_module;
+use runkarsk::{config, telemetry};
 use serde::Serialize;
 use tracing::instrument;
-use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
-use std::collections::HashMap;
 use std::num::NonZero;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -83,7 +79,7 @@ where
     let _ = w2.flush().await;
 }
 
-#[instrument(skip(args), fields(args = %serde_json::to_string(&args).unwrap_or_else(|_| "<failed to serialize>".to_string()), otel.kind = "server"))]
+#[instrument(skip(args), fields(param.args = %serde_json::to_string(&args).unwrap_or_else(|_| "<failed to serialize>".to_string()), otel.kind = "server"))]
 async fn start(args: Args) -> i32 {
     let args = Args::parse();
     let mut command = build_command(&args);
@@ -113,25 +109,10 @@ async fn start(args: Args) -> i32 {
     status.code().unwrap_or_default()
 }
 
-#[tokio::main]
-async fn main() {
-    let args = Args::parse();
+fn main() {
+    telemetry::run_main(env!("CARGO_BIN_NAME"), async || {
+        let args = Args::parse();
 
-    let telemetry = Telemetry::init(env!("CARGO_BIN_NAME"));
-    let carrier: HashMap<_, _> = ["traceparent", "tracestate"]
-        .into_iter()
-        .filter_map(|key| std::env::var(key).ok().map(|value| (key.to_owned(), value)))
-        .collect();
-
-    let parent = TraceContextPropagator::new().extract(&carrier);
-    let code = {
-        let span = tracing::info_span!("runner");
-        if !carrier.is_empty() {
-            span.set_parent(parent).unwrap();
-        }
-        let _entered = span.enter();
         start(args).await
-    };
-    telemetry.shutdown();
-    std::process::exit(code);
+    });
 }

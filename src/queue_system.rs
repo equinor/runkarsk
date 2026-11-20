@@ -195,7 +195,7 @@ impl QueueSystem {
         }
     }
 
-    #[instrument(fields(otel.kind = "client"))]
+    #[instrument(skip_all, fields(param.self = ?self, param.command = ?command, otel.kind = "client"))]
     pub async fn exec(&self, command: Command) -> Result<(), Box<dyn Error>> {
         match self {
             QueueSystem::Local { .. } => {
