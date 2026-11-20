@@ -15,12 +15,38 @@ name = "runphast"
 [[bin]]
 name = "runpflotran"
 
+[features]
+default = ["appinsights", "otlp-http", "otlp-grpc"]
+# Application Insights exporter.
+appinsights = [
+    "dep:opentelemetry-application-insights",
+    "dep:opentelemetry-http",
+    "dep:reqwest",
+]
+# OTLP over HTTP/protobuf.
+otlp-http = [
+    "dep:opentelemetry-otlp",
+    "dep:reqwest",
+    "opentelemetry-otlp/http-proto",
+    "opentelemetry-otlp/reqwest-blocking-client",
+]
+# OTLP over gRPC.
+otlp-grpc = [
+    "dep:opentelemetry-otlp",
+    "opentelemetry-otlp/grpc-tonic",
+    "opentelemetry-otlp/tls-ring",
+    "opentelemetry-otlp/tls-roots",
+]
+
 [dependencies]
 async-trait = "0.1.91"
 clap = { version = "4.6.2", features = ["derive"] }
 opentelemetry = "0.33.0"
-opentelemetry-otlp = { version = "0.33.0", features = ["grpc-tonic"] }
+opentelemetry-application-insights = { version = "0.46.0", optional = true }
+opentelemetry-http = { version = "0.33.0", features = ["reqwest-blocking"], optional = true }
+opentelemetry-otlp = { version = "0.33.0", default-features = false, features = ["trace"], optional = true }
 opentelemetry_sdk = "0.33.0"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"], optional = true }
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
@@ -29,6 +55,7 @@ tracing = "0.1.44"
 tracing-opentelemetry = "0.34.0"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 which = "8.0.5"
+anyhow = "1.0.104"
 
 [dev-dependencies]
 testdir = "0.10.0"
